@@ -11,4 +11,7 @@ setup(
             'kubecert = kubecert:main'
         ]
     },
+    install_requires= [
+        'effect',
+    ],
 )

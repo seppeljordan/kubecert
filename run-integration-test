@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+
+nix-build
+result/bin/kubecert \
+    ca \
+    --common-name ca.name \
+    tmp/ca
+
+result/bin/kubecert \
+    cert \
+    --common-name common.name \
+    --kind client \
+    --ca-path tmp/ca \
+    tmp/client_cert
+
+result/bin/kubecert \
+    cert \
+    --common-name common.name \
+    --kind server \
+    --ca-path tmp/ca \
+    --server-ip 1.2.3.4 \
+    tmp/server_cert

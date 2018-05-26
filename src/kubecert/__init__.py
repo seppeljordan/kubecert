@@ -5,169 +5,329 @@ import os
 import os.path
 import subprocess
 
+import attr
+from effect import (ComposedDispatcher, Effect, TypeDispatcher,
+                    base_dispatcher, sync_perform, sync_performer)
+from effect.do import do
+from effect.io import stdio_dispatcher
+
+
+def dispatcher():
+    return ComposedDispatcher([
+        base_dispatcher,
+        stdio_dispatcher,
+        TypeDispatcher({
+            RunCommand: run_command_performer,
+            CreateDirectory: create_directory_performer,
+            GenerateRSAKey: generate_rsa_key_performer,
+            GenerateCACertificate: generate_ca_certificate_performer,
+            GenerateOpenSSLConfig: generate_openssl_config_performer,
+            GenerateCSR: generate_csr_performer,
+            SignCertificate: sign_certificate_performer,
+            ReplaceStringInFile: replace_string_in_file_performer,
+        }),
+    ])
+
+
+@attr.s
+class ReplaceStringInFile(object):
+    path = attr.ib()
+    placeholder = attr.ib()
+    entry_string = attr.ib()
+
+
+@sync_performer
+def replace_string_in_file_performer(dispatcher, intent):
+    @do
+    def do_effect():
+        yield Effect(RunCommand(
+            (
+                'sed -i.bak "s/{token}/{entry}/" '
+                '{path}'
+            ).format(
+                path=intent.path,
+                token=intent.placeholder,
+                entry=intent.entry_string,
+            )
+        ))
+        return Effect(RunCommand('rm -fv {path}.bak'.format(
+            path=intent.path
+        )))
+    return do_effect()
+
+
+@attr.s
+class RunCommand(object):
+    cmd = attr.ib()
+    dry_run = attr.ib(default=False)
+    stdin = attr.ib(default=None)
+    stdout = attr.ib(default=None)
+
+
+@sync_performer
+def run_command_performer(dispatcher, intent):
+    cmd = intent.cmd
+    stdin = intent.stdin
+    stdout = intent.stdout
+    dry_run = intent.dry_run
+    if dry_run:
+        print(cmd)
+        return None
+    else:
+        if stdin is None:
+            return subprocess.run(cmd, shell=True)
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdin=subprocess.PIPE,
+                stdout=stdout,
+                universal_newlines=True,
+            )
+            proc.stdin.write(stdin)
+            return proc.communicate()
+
+
+@attr.s
+class CreateDirectory(object):
+    path = attr.ib()
+    create_parents = attr.ib(default=False)
+
+
+@sync_performer
+def create_directory_performer(dispatcher, intent):
+    cmd = "mkdir " + (
+        "-p " if intent.create_parents else ""
+    ) + intent.path
+    return Effect(RunCommand(cmd=cmd))
+
+
+@attr.s
+class GenerateCACertificate(object):
+    path = attr.ib()
+    common_name = attr.ib()
+    key_path = attr.ib()
+
+
+@sync_performer
+def generate_ca_certificate_performer(dispatcher, intent):
+    return Effect(RunCommand(
+        cmd=(
+            'openssl req -x509 -new -nodes -key {key} -days 10000 -out {out} '
+            '-subj "/CN={cn}"'
+        ).format(
+            key=intent.key_path,
+            out=intent.path,
+            cn=intent.common_name
+        ),
+    ))
+
+
+@attr.s
+class GenerateRSAKey(object):
+    path = attr.ib()
+
+
+@sync_performer
+def generate_rsa_key_performer(dispatcher, intent):
+    return Effect(RunCommand(
+        cmd="openssl genrsa -out {out} 2048".format(
+            out=intent.path,
+        ),
+    ))
+
+
+@attr.s
+class GenerateCert(object):
+    dry_run = attr.ib()
+    ca_path = attr.ib()
+    outname = attr.ib()
+    common_name = attr.ib()
+    kind = attr.ib()
+    server_ip = attr.ib()
+
+
+@attr.s
+class GenerateOpenSSLConfig(object):
+    path = attr.ib()
+    kind = attr.ib()
+
+
+@sync_performer
+def generate_openssl_config_performer(dispatcher, intent):
+
+    if intent.kind == 'client':
+        template_path = os.path.join(
+            configs_path(), "client-openssl.conf"
+        )
+    else:
+        template_path = os.path.join(
+            configs_path(), "server-openssl.conf"
+        )
+
+    @do
+    def do_work():
+        yield Effect(RunCommand(
+            cmd='rm -f {config_path}'.format(
+                config_path=intent.path
+            )
+        ))
+        yield Effect(RunCommand(
+            cmd='cp -v {template} {output}'.format(
+                template=template_path,
+                output=intent.path,
+            )
+        ))
+
+    return do_work()
+
+
+@attr.s
+class GenerateCSR(object):
+    output_path = attr.ib()
+    key_path = attr.ib()
+    common_name = attr.ib()
+    config_path = attr.ib()
+
+
+@sync_performer
+def generate_csr_performer(dispatcher, intent):
+    return Effect(RunCommand(
+        (
+            'openssl req -new -key {keypath} -out {outpath} -subj '
+            '"/CN={common_name}" -config {config}'
+        ).format(
+            keypath=intent.key_path,
+            outpath=intent.output_path,
+            common_name=intent.common_name,
+            config=intent.config_path,
+        )
+    ))
+
+
+@attr.s
+class SignCertificate(object):
+    csr_path = attr.ib()
+    ca_cert_path = attr.ib()
+    ca_key_path = attr.ib()
+    output_path = attr.ib()
+    config_path = attr.ib()
+
+
+@sync_performer
+def sign_certificate_performer(dispatcher, intent):
+    return Effect(RunCommand(
+        (
+            'openssl x509 -req -in {csrpath} -CA {cacert} -CAkey {cakey} '
+            '-CAcreateserial -out {outpath} -days 365 -extensions v3_req '
+            '-extfile {confpath}'
+        ).format(
+            csrpath=intent.csr_path,
+            cacert=intent.ca_cert_path,
+            cakey=intent.ca_key_path,
+            outpath=intent.output_path,
+            confpath=intent.config_path
+        )))
+
+
+@do
+def generate_ca(output_path, common_name, dry_run=False):
+    yield Effect(CreateDirectory(
+        path=output_path,
+        create_parents=True,
+    ))
+    yield Effect(GenerateRSAKey(path=output_path + '/ca-key.pem'))
+    return Effect(GenerateCACertificate(
+        path=output_path + '/ca-crt.pem',
+        key_path=output_path + '/ca-key.pem',
+        common_name=common_name
+    ))
+
+
+@do
+def generate_cert(
+        ca_path,
+        outpath,
+        common_name,
+        kind,
+        server_ip=None,
+        dry_run=False
+):
+    # generate certificate key
+    yield Effect(CreateDirectory(
+        path=outpath,
+        create_parents=True
+    ))
+
+    key_path = outpath + '/key.pem'
+
+    yield Effect(GenerateRSAKey(path=key_path))
+
+    config_path = outpath + '/openssl.conf'
+
+    yield Effect(GenerateOpenSSLConfig(
+        path=config_path,
+        kind=kind,
+    ))
+
+    if server_ip is not None:
+        yield Effect(ReplaceStringInFile(
+            path=config_path,
+            placeholder='# additional names.*',
+            entry_string='IP.3 = {address}'.format(
+                address=server_ip
+            )
+        ))
+
+    csr_path = outpath + '/csr.pem'
+
+    # create csr
+    yield Effect(GenerateCSR(
+        output_path=csr_path,
+        config_path=config_path,
+        common_name=common_name,
+        key_path=key_path
+    ))
+
+    cert_path = outpath + '/crt.pem'
+
+    return Effect(SignCertificate(
+        csr_path=csr_path,
+        ca_cert_path=ca_path + '/ca-crt.pem',
+        ca_key_path=ca_path + '/ca-key.pem',
+        output_path=cert_path,
+        config_path=config_path
+    ))
+
 
 def configs_path():
     this_dir, this_filename = os.path.split(__file__)
     return os.path.join(this_dir, "configs")
 
 
-def make_command_runner(dry_run):
-    def run(cmd, stdin=None, stdout=None):
-        if dry_run:
-            print(cmd)
-            return None
-        else:
-            if stdin is None:
-                return subprocess.run(cmd, shell=True)
-            else:
-                proc = subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    stdin=subprocess.PIPE,
-                    stdout=stdout,
-                    universal_newlines=True,
-                )
-                proc.stdin.write(stdin)
-                return proc.communicate()
-    return run
-
-
-def generate_ca(args):
-    run_cmd = make_command_runner(args.dry_run)
-    outpath = args.output
-    run_cmd("mkdir -vp {out}".format(out=outpath))
-    run_cmd("openssl genrsa -out {out} 2048".format(
-        out=outpath + "/ca-key.pem"
-    ))
-    run_cmd('openssl req -x509 -new -nodes -key {key} -days 10000 -out {out} -subj "/CN={cn}"'.format(
-        key=outpath + "/ca-key.pem",
-        out=outpath + "/ca-crt.pem",
-        cn=args.common_name
-    ))
-
-
-def _generate_cert(args):
-    generate_cert(
-        dry_run=args.dry_run,
-        ca_path=args.ca_path,
-        outname=args.output,
-        common_name=args.common_name,
-        kind=args.kind,
-        server_ip=args.server_ip,
-    )
-
-
-def generate_cert(dry_run, ca_path, outname, common_name, kind, server_ip=None):
-    run_cmd = make_command_runner(dry_run)
-
-    # generate certificate key
-    run_cmd('mkdir -vp {path}'.format(
-        path=ca_path + "/certs"
-    ))
-    run_cmd('openssl genrsa -out {outpath} 2048'.format(
-        outpath=ca_path + "/certs/" + outname + "-key.pem"
-    ))
-
-    if kind == 'client':
-        conf_path = os.path.join(
-            configs_path(), "client-openssl.conf"
+def generate_ca_command(args):
+    sync_perform(
+        dispatcher(),
+        generate_ca(
+            output_path=args.output,
+            common_name=args.common_name,
+            dry_run=args.dry_run,
         )
-    else:
-        conf_path = os.path.join(
-            configs_path(), "server-openssl.conf"
-        )
-
-    # copy config file
-    config_path = ca_path + "/certs/" + outname + "-openssl.conf"
-    run_cmd('rm -f {config_path}'.format(
-        config_path=config_path
-    ))
-    run_cmd('cp -v {conf_path} {out_path}'.format(
-        conf_path=conf_path,
-        out_path=config_path,
-    ))
-
-    # create csr
-    run_cmd('openssl req -new -key {keypath} -out {outpath} -subj "/CN={common_name}" -config {config}'.format(
-        keypath=ca_path + "/certs/" + outname + "-key.pem",
-        outpath=ca_path + "/certs/" + outname + ".csr",
-        common_name=common_name,
-        config=config_path,
-    ))
-    if server_ip is not None:
-        run_cmd('sed -i.bak "s/# additional names.*/IP.3 = {address}/" {config_path}'.format(
-            address=server_ip,
-            config_path=config_path,
-        ))
-        run_cmd('rm -fv {config_path}.bak'.format(
-            config_path=config_path
-        ))
-
-    # sign certificate
-    run_cmd('openssl x509 -req -in {csrpath} -CA {cacert} -CAkey {cakey} -CAcreateserial -out {outpath} -days 365 -extensions v3_req -extfile {confpath}'.format(
-        csrpath=ca_path + "/certs/" + outname + ".csr",
-        cacert=ca_path + "/ca-crt.pem",
-        cakey=ca_path + "/ca-key.pem",
-        outpath=ca_path + "/certs/" + outname + "-crt.pem",
-        confpath=ca_path + "/certs/" + outname + "-openssl.conf",
-    ))
-
-
-def find_hosts_in_ansible_group(group, inventory_path):
-    run_cmd = make_command_runner(dry_run=False)
-    proc_input = 'cd {group}\ndebug msg="IP_ADDRESS={{{{ ansible_ssh_host }}}}"'.format(
-        group=group,
     )
-    if inventory_path is None:
-        ansible_console_cmd = 'ansible-console'
-    else:
-        ansible_console_cmd = (
-            'ansible-console -i {inventory_path}'.format(
-                inventory_path=inventory_path,
-            ))
-    proc_out = run_cmd(
-        ansible_console_cmd,
-        stdin=proc_input,
-        stdout=subprocess.PIPE,
-    )
-    output = proc_out[0].splitlines()
-    addresses = [
-        line.split('=')[-1][:-1] for line
-        in output
-        if 'IP_ADDRESS' in line
-    ]
-    return addresses
 
 
-def concat(xs):
-    ret = []
-    for x in xs:
-        ret += x
-    return ret
-
-
-def generate_group_certs(args):
-    ca_path = args.ca_path
-    groups_str = args.groups
-    ansible_inventory = args.ansible_inventory
-    groups = groups_str.split(',')
-
-    # find out hosts to issue certificate for
-    hosts = concat([
-        find_hosts_in_ansible_group(group, ansible_inventory)
-        for group in groups
-    ])
-
-    # issue certificates
-    for host in hosts:
+def generate_cert_command(args):
+    sync_perform(
+        dispatcher(),
         generate_cert(
             dry_run=args.dry_run,
-            ca_path=ca_path,
-            outname=host.replace('.','-'),
-            common_name=host,
-            kind="server",
-            server_ip=host,
+            ca_path=args.ca_path,
+            outpath=args.output,
+            common_name=args.common_name,
+            kind=args.kind,
+            server_ip=args.server_ip,
         )
+    )
 
 
 def print_usage(parser):
@@ -188,8 +348,9 @@ argument_parser.add_argument(
     action='store_true',
 )
 
+
 ca_parser = subparsers.add_parser('ca')
-ca_parser.set_defaults(func=generate_ca)
+ca_parser.set_defaults(func=generate_ca_command)
 ca_parser.add_argument(
     'output',
     type=str,
@@ -202,11 +363,12 @@ ca_parser.add_argument(
     dest='common_name'
 )
 
+
 cert_parser = subparsers.add_parser('cert')
-cert_parser.set_defaults(func=_generate_cert)
+cert_parser.set_defaults(func=generate_cert_command)
 cert_parser.add_argument(
     '--kind',
-    choices=[ 'server', 'client' ],
+    choices=['server', 'client'],
     required=True,
 )
 cert_parser.add_argument(
@@ -231,27 +393,6 @@ cert_parser.add_argument(
     type=str,
     help='The IP address of the target machine',
     default=None,
-    required=False,
-)
-
-kube_certs_parser = subparsers.add_parser('group-certs')
-kube_certs_parser.set_defaults(func=generate_group_certs)
-kube_certs_parser.add_argument(
-    '--ca-path',
-    type=str,
-    help='Path to the certificate authority that is used to sign the generated certs',
-    required=True,
-)
-kube_certs_parser.add_argument(
-    '--groups',
-    type=str,
-    help='Comma seperated list of ansible groups that are part of the cluster',
-    required=True,
-)
-kube_certs_parser.add_argument(
-    '--ansible-inventory',
-    type=str,
-    help='Ansible inventory path',
     required=False,
 )
 

@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+
+cd nix
+pypi2nix -V 3 \
+         -e effect \
+         -e attrs \
+         -e pytest \
+         -e flake8 \
+         --default-overrides
