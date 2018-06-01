@@ -236,10 +236,12 @@ def generate_ca(output_path, common_name, dry_run=False):
         path=output_path,
         create_parents=True,
     ))
-    yield Effect(GenerateRSAKey(path=output_path + '/ca-key.pem'))
+    yield Effect(GenerateRSAKey(
+        path=os.path.join(output_path, 'ca-key.pem')
+    ))
     return Effect(GenerateCACertificate(
-        path=output_path + '/ca-crt.pem',
-        key_path=output_path + '/ca-key.pem',
+        path=os.path.join(output_path, 'ca-crt.pem'),
+        key_path=os.path.join(output_path, 'ca-key.pem'),
         common_name=common_name
     ))
 
@@ -259,11 +261,11 @@ def generate_cert(
         create_parents=True
     ))
 
-    key_path = outpath + '/key.pem'
+    key_path = os.path.join(outpath, 'key.pem')
 
     yield Effect(GenerateRSAKey(path=key_path))
 
-    config_path = outpath + '/openssl.conf'
+    config_path = os.path.join(outpath, 'openssl.conf')
 
     yield Effect(GenerateOpenSSLConfig(
         path=config_path,
@@ -279,9 +281,8 @@ def generate_cert(
             )
         ))
 
-    csr_path = outpath + '/csr.pem'
+    csr_path = os.path.join(outpath, 'csr.pem')
 
-    # create csr
     yield Effect(GenerateCSR(
         output_path=csr_path,
         config_path=config_path,
@@ -289,12 +290,12 @@ def generate_cert(
         key_path=key_path
     ))
 
-    cert_path = outpath + '/crt.pem'
+    cert_path = os.path.join(outpath, 'crt.pem')
 
     return Effect(SignCertificate(
         csr_path=csr_path,
-        ca_cert_path=ca_path + '/ca-crt.pem',
-        ca_key_path=ca_path + '/ca-key.pem',
+        ca_cert_path=os.path.join(ca_path, 'ca-crt.pem'),
+        ca_key_path=os.path.join(ca_path, 'ca-key.pem'),
         output_path=cert_path,
         config_path=config_path
     ))
