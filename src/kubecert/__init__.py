@@ -96,10 +96,10 @@ class CreateDirectory(object):
 
 @sync_performer
 def create_directory_performer(dispatcher, intent):
-    cmd = "mkdir " + (
-        "-p " if intent.create_parents else ""
-    ) + intent.path
-    return Effect(RunCommand(cmd=cmd))
+    if intent.create_parents:
+        os.makedirs(intent.path, exist_ok=True)
+    else:
+        os.mkdir(intent.path)
 
 
 @attr.s
