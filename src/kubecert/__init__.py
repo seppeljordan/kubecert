@@ -38,22 +38,14 @@ class ReplaceStringInFile(object):
 
 @sync_performer
 def replace_string_in_file_performer(dispatcher, intent):
-    @do
-    def do_effect():
-        yield Effect(RunCommand(
-            (
-                'sed -i.bak "s/{token}/{entry}/" '
-                '{path}'
-            ).format(
-                path=intent.path,
-                token=intent.placeholder,
-                entry=intent.entry_string,
-            )
+    with open(intent.path, 'r') as f:
+        file_content = f.read()
+
+    with open(intent.path, 'w') as f:
+        f.write(file_content.replace(
+            intent.placeholder,
+            intent.entry_string
         ))
-        return Effect(RunCommand('rm -fv {path}.bak'.format(
-            path=intent.path
-        )))
-    return do_effect()
 
 
 @attr.s
@@ -252,7 +244,7 @@ def generate_cert(
         outpath,
         common_name,
         kind,
-        server_ip=None,
+        additional_addresses=[],
         dry_run=False
 ):
     # generate certificate key
@@ -272,13 +264,21 @@ def generate_cert(
         kind=kind,
     ))
 
-    if server_ip is not None:
+    if additional_addresses:
+        additional_entries = [
+            'IP.{n} = {address}'.format(
+                n=n,
+                address=address
+            ) for address, n
+            in zip(
+                additional_addresses,
+                range(3, len(additional_addresses) + 3)
+            )
+        ]
         yield Effect(ReplaceStringInFile(
             path=config_path,
-            placeholder='# additional names.*',
-            entry_string='IP.3 = {address}'.format(
-                address=server_ip
-            )
+            placeholder='# additional names',
+            entry_string='\n'.join(additional_entries)
         ))
 
     csr_path = os.path.join(outpath, 'csr.pem')
@@ -326,7 +326,7 @@ def generate_cert_command(args):
             outpath=args.output,
             common_name=args.common_name,
             kind=args.kind,
-            server_ip=args.server_ip,
+            additional_addresses=args.additional_address,
         )
     )
 
@@ -390,9 +390,10 @@ cert_parser.add_argument(
     required=True
 )
 cert_parser.add_argument(
-    '--server-ip',
+    '--additional-address',
     type=str,
-    help='The IP address of the target machine',
+    help='Address of the machine, can be specified multiple times',
+    action='append',
     default=None,
     required=False,
 )

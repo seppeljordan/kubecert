@@ -1,3 +1,4 @@
+import os.path
 from distutils.core import setup
 
 setup(
@@ -5,7 +6,6 @@ setup(
     version="1.0",
     package_dir={'': 'src'},
     packages=['kubecert'],
-    include_package_data=True,
     entry_points={
         'console_scripts': [
             'kubecert = kubecert:main'
@@ -14,4 +14,11 @@ setup(
     install_requires= [
         'effect',
     ],
+    data_files=[
+        ('templates', list(map(
+            lambda file: os.path.join('src', 'kubecert', 'configs', file),
+            ['server-openssl.conf', 'client-openssl.conf']
+        )))
+    ],
+    include_package_data=True,
 )

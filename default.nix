@@ -27,11 +27,7 @@ let
       '';
     };
 in
-nixpkgs.callPackage f
+nixpkgs.lib.callPackageWith (nixpkgs // pypiPackages.packages) f
 {
   buildPythonPackage = nixpkgs.python3Packages.buildPythonPackage;
-  effect = pypiPackages.packages.effect;
-  attrs = pypiPackages.packages.attrs;
-  pytest = pypiPackages.packages.pytest;
-  flake8 = pypiPackages.packages.flake8;
 }
