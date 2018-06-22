@@ -235,6 +235,7 @@ def generate_cert(
         common_name,
         kind,
         additional_addresses=[],
+        additional_names=[],
         dry_run=False
 ):
     # generate certificate key
@@ -254,21 +255,38 @@ def generate_cert(
         kind=kind,
     ))
 
-    if additional_addresses:
-        additional_entries = [
+    if additional_addresses or additional_names:
+        additional_dns_entries = '\n'.join([
+            'DNS.{n} = {name}'.format(
+                n=n,
+                name=name,
+            ) for name, n
+            in zip(
+                additional_names,
+                range(3, len(additional_names) + 3)
+            )
+        ])
+        additional_address_entries = '\n'.join([
             'IP.{n} = {address}'.format(
                 n=n,
                 address=address
             ) for address, n
             in zip(
                 additional_addresses,
-                range(3, len(additional_addresses) + 3)
+                range(
+                    3 + len(additional_names),
+                    3 + len(additional_names) + len(additional_addresses)
+                )
             )
-        ]
+        ])
+        additional_entries = '\n'.join([
+            additional_dns_entries,
+            additional_address_entries
+        ])
         yield Effect(ReplaceStringInFile(
             path=config_path,
             placeholder='# additional names',
-            entry_string='\n'.join(additional_entries)
+            entry_string=additional_entries,
         ))
 
     csr_path = os.path.join(outpath, 'csr.pem')
@@ -317,6 +335,7 @@ def generate_cert_command(args):
             common_name=args.common_name,
             kind=args.kind,
             additional_addresses=args.additional_address,
+            additional_names=args.additional_name,
         )
     )
 
@@ -384,8 +403,17 @@ cert_parser.add_argument(
     type=str,
     help='Address of the machine, can be specified multiple times',
     action='append',
-    default=None,
+    default=[],
     required=False,
+)
+cert_parser.add_argument(
+    '--additional-name',
+    type=str,
+    help='Name under which the can be reached, '
+    'can be specified multiple times',
+    action='append',
+    default=[],
+    required=False
 )
 
 

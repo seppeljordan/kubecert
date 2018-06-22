@@ -114,7 +114,7 @@ def test_create_server_cert():
             kubecert.ReplaceStringInFile(
                 path='/cert/openssl.conf',
                 placeholder='# additional names',
-                entry_string='IP.3 = 1.2.3.4',
+                entry_string='DNS.3 = test.name\nIP.4 = 1.2.3.4',
             ),
             return_none
         ),
@@ -144,5 +144,6 @@ def test_create_server_cert():
         common_name='common.name',
         kind='server',
         additional_addresses=['1.2.3.4'],
+        additional_names=['test.name'],
     )
     perform_sequence(seq, eff)
