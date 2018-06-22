@@ -1,25 +1,48 @@
 #!/usr/bin/env sh
 
-set -e
+# nix-build
 
-nix-build
-result/bin/kubecert \
-    ca \
-    --common-name ca.name \
-    tmp/ca
+generate_ca_test() {
+    echo "Test CA generation"
+    result/bin/kubecert \
+        ca \
+        --common-name ca.name \
+        tmp/ca
+}
 
-result/bin/kubecert \
-    cert \
-    --common-name common.name \
-    --kind client \
-    --ca-path tmp/ca \
-    tmp/client_cert
 
-result/bin/kubecert \
-    cert \
-    --common-name common.name \
-    --kind server \
-    --ca-path tmp/ca \
-    --additional-address 1.2.3.4 \
-    --additional-address 5.6.7.8 \
-    tmp/server_cert
+generate_client_cert_test() {
+    result/bin/kubecert \
+        cert \
+        --common-name common.name \
+        --kind client \
+        --ca-path tmp/ca \
+        tmp/client_cert
+}
+
+generate_server_cert_test() {
+    result/bin/kubecert \
+        cert \
+        --common-name common.name \
+        --kind server \
+        --ca-path tmp/ca \
+        --additional-address 1.2.3.4 \
+        --additional-address 5.6.7.8 \
+        tmp/server_cert
+}
+
+run_testcase(){
+    CASE="$1"
+    echo -n "Test '${CASE}' ..."
+    if eval "$1" > /dev/null 2> /dev/null ; then
+        echo "...  passed."
+    else
+        echo "... failed."
+    fi
+}
+
+TESTCASES="generate_ca_test generate_client_cert_test generate_server_cert_test"
+
+for testcase in $TESTCASES; do
+    run_testcase "${testcase}"
+done

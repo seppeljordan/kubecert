@@ -157,21 +157,11 @@ def generate_openssl_config_performer(dispatcher, intent):
             configs_path(), "server-openssl.conf"
         )
 
-    @do
-    def do_work():
-        yield Effect(RunCommand(
-            cmd='rm -f {config_path}'.format(
-                config_path=intent.path
-            )
-        ))
-        yield Effect(RunCommand(
-            cmd='cp -v {template} {output}'.format(
-                template=template_path,
-                output=intent.path,
-            )
-        ))
+    target_path = intent.path
 
-    return do_work()
+    with open(target_path, 'w') as target_file:
+        with open(template_path, 'r') as source_file:
+            target_file.write(source_file.read())
 
 
 @attr.s
